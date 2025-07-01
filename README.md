@@ -19,6 +19,7 @@ Local feature detection is fundamental for tasks such as image stitching, locali
 <img src="assets/intro_compare.png" alt="Comparison of feature detection methods on blurred images" width="800">
 <p><em>Figure 1: Comparison of feature detection performance between traditional methods and our RLFDB approach across different blur conditions. Our method maintains consistent detection quality while existing methods degrade significantly in blurred scenarios.</em></p>
 </div>
+
 ## ✨ Features
 
 - **🎯 Robust Detection**: Maintains high repeatability in various blur conditions
