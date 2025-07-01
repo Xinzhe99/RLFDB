@@ -166,26 +166,7 @@ python train.py
 
 ## 📈 Evaluation
 
-### HSequences Benchmark
-
-```bash
-# Evaluate on HSequences dataset
-python hsequeces_bench_kpts.py \
-    --benchmark_input_root datasets/HSequences \
-    --results_dir results/hsequences \
-    --detector_name RLFDB \
-    --ckpt_file pretrained/checkpoint.pth
-```
-
-
-
-## 📊 Results
-
-### Performance on HSequences
-
-
-
-
+We have created a toolbox for evaluation, which is in preparation, so stay tuned
 
 ## 📝 Citation
 
