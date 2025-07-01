@@ -10,14 +10,13 @@
 
 **A robust local feature detection method for blurred images**
 
-
 </div>
 
 
 ## 📖 Introduction
 Local feature detection is fundamental for tasks such as image stitching, localization, and 3D reconstruction. However, the performance of existing methods severely degrades when processing real-world images that exhibit various types and degrees of blur. To address this challenge, we introduce the first local keypoint detector that leverages a Mixture-of-Experts (MoE) model, significantly enhancing its robustness across diverse blur conditions as well as on clear images. Our detector employs an MoE-based decoder that is jointly trained on both clear and diversely blurred images. It adaptively selects the optimal expert through a hard routing mechanism to adjust to varying image conditions. Furthermore, we employ various techniques to reduce the network's texture bias, which further improves its robustness to blurred images. Extensive experiments demonstrate that our detector achieves state-of-the-art performance on both clear and various types of blurred images, providing a general and real-time solution for challenging visual environments.
 <div align="center">
-<img src="assets/intro_compare.pdf" alt="Comparison of feature detection methods on blurred images" width="800">
+<img src="assets/intro_compare.png" alt="Comparison of feature detection methods on blurred images" width="800">
 <p><em>Figure 1: Comparison of feature detection performance between traditional methods and our RLFDB approach across different blur conditions. Our method maintains consistent detection quality while existing methods degrade significantly in blurred scenarios.</em></p>
 </div>
 ## ✨ Features
