@@ -54,14 +54,14 @@ pip install -r requirements.txt
 
 ## 🚀 Quick Start
 
-### Download Pretrained Models
+### Download [Pretrained Models](https://pan.baidu.com/s/1fxlTjq2hRv6Y_XPOoR1qHA?pwd=cite)
 
 ```bash
 # Create pretrained directory
 mkdir pretrained
 
 # Download pretrained weights (replace with actual download link)
-wget -O pretrained/[checkpoint.pth](https://pan.baidu.com/s/1fxlTjq2hRv6Y_XPOoR1qHA?pwd=cite)
+wget -O pretrained/checkpoint.pth
 ```
 
 ### Simple Inference
