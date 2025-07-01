@@ -14,21 +14,6 @@
 
 </div>
 
-## 📋 Table of Contents
-
-- [Introduction](#introduction)
-- [Features](#features)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Usage](#usage)
-- [Dataset](#dataset)
-- [Training](#training)
-- [Evaluation](#evaluation)
-- [Results](#results)
-- [Model Architecture](#model-architecture)
-- [Citation](#citation)
-- [License](#license)
-- [Acknowledgments](#acknowledgments)
 
 ## 📖 Introduction
 Local feature detection is fundamental for tasks such as image stitching, localization, and 3D reconstruction. However, the performance of existing methods severely degrades when processing real-world images that exhibit various types and degrees of blur. To address this challenge, we introduce the first local keypoint detector that leverages a Mixture-of-Experts (MoE) model, significantly enhancing its robustness across diverse blur conditions as well as on clear images. Our detector employs an MoE-based decoder that is jointly trained on both clear and diversely blurred images. It adaptively selects the optimal expert through a hard routing mechanism to adjust to varying image conditions. Furthermore, we employ various techniques to reduce the network's texture bias, which further improves its robustness to blurred images. Extensive experiments demonstrate that our detector achieves state-of-the-art performance on both clear and various types of blurred images, providing a general and real-time solution for challenging visual environments.
