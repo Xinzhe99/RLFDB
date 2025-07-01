@@ -10,7 +10,6 @@
 
 **A robust local feature detection method for blurred images**
 
-[Paper] | [Pretrained Models] | [Demo] | [Results]
 
 </div>
 
