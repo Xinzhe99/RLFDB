@@ -126,6 +126,8 @@ print(f"Detected {len(keypoints)} keypoints")
 ## 📊 Dataset
 
 ### Data Preparation (For training)
+All the datasets you need can be downloaded from this [link](https://pan.baidu.com/s/19V-JSJ1iHSEPctzpUo9o3w?pwd=cite).
+The GOPRO dataset is used for training and the Hpatch-sequence dataset is used for evaluation.
 
 ```bash
 # Create dataset directory
