@@ -141,7 +141,7 @@ data/
 │   │   ├── ...
 │   │   └── ...
 │   ├── test
-```
+── GOPRO_raw_ground_truth_more_points/
 
 ### Dataset Configuration (For training)
 
