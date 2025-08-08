@@ -3,10 +3,12 @@ import numpy as np
 import kornia as K
 from PIL import Image
 import cv2
-from utils import test_utils
+from utils.test_utils import detect
 from model.network import RLFDB
 from third_party.hardnet.hardnet_pytorch import HardNet
 import argparse
+import os
+import time
 
 def load_im(im_path):
     im = Image.open(im_path)
@@ -16,44 +18,6 @@ def load_im(im_path):
     im_gray = np.array(im_gray)
     return im_rgb, im_gray
 
-def detect(args, im, detector, device):
-    im = im / 255.
-    height_RGB_norm, width_RGB_norm = im.shape[0], im.shape[1]
-    image_even = test_utils.make_shape_even(im)
-    height_even, width_even = image_even.shape[0], image_even.shape[1]
-    image_pad = test_utils.mod_padding_symmetric(image_even, factor=64)
-    image_pad_tensor = torch.tensor(image_pad, dtype=torch.float32)
-    image_pad_tensor = image_pad_tensor.permute(2, 0, 1)
-    image_pad_batch = image_pad_tensor.unsqueeze(0)
-
-    with torch.inference_mode():
-        output_pad_batch = detector(image_pad_batch.to(device))
-
-    score_map_pad_batch = output_pad_batch['prob']
-    score_map_pad_np = score_map_pad_batch[0, :, :].detach().cpu().numpy()
-
-    # unpad images to get the original resolution
-    new_height, new_width = score_map_pad_np.shape[0], score_map_pad_np.shape[1]
-    h_start = new_height // 2 - height_even // 2
-    h_end = h_start + height_RGB_norm
-    w_start = new_width // 2 - width_even // 2
-    w_end = w_start + width_RGB_norm
-    score_map = score_map_pad_np[h_start:h_end, w_start:w_end]
-    score_map_remove_border = test_utils.remove_borders(score_map, borders=args.border_size)
-    pts = test_utils.get_points_direct_from_score_map(
-        heatmap=score_map_remove_border, conf_thresh=args.heatmap_confidence_threshold,
-        nms_size=args.nms_size, subpixel=args.sub_pixel,
-        patch_size=args.patch_size, order_coord=args.order_coord
-    )
-    
-    if pts.size == 0:
-        return np.zeros([0,3])
-
-    pts_sorted = pts[(-1 * pts[:, 3]).argsort()]
-    pts_output = pts_sorted[:args.num_features]
-
-    return pts_output[:, 0:3]
-
 def extract_features(args, im_rgb, im_gray, detector, descriptor, device):
     kpts_np = detect(args, im_rgb, detector, device)
     num_kpts = kpts_np.shape[0]
@@ -61,7 +25,7 @@ def extract_features(args, im_rgb, im_gray, detector, descriptor, device):
     if num_kpts == 0:
         return np.zeros([0,2]), np.array([])
     
-    kpts = torch.from_numpy(kpts_np)
+    kpts = torch.from_numpy(kpts_np[:, 0:2])  # Only use x, y coordinates
     kp = torch.cat([kpts[:, 0].view(-1, 1).float(), kpts[:, 1].view(-1, 1).float()],dim=1).unsqueeze(0).to(device)
     s = args.s_mult * torch.ones((1, num_kpts, 1, 1)).to(device)
     src_laf = K.feature.laf_from_center_scale_ori(kp, s, torch.zeros((1, num_kpts, 1)).to(device))
@@ -159,6 +123,7 @@ def parse_test_config():
     return args
 
 if __name__ == "__main__":
+    start_time = time.time()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     args = parse_test_config()
 
@@ -177,20 +142,112 @@ if __name__ == "__main__":
     descriptor.load_state_dict(checkpoint_descriptor['state_dict'])
     descriptor = descriptor.eval().to(device)
 
-    # 加载图像
+    # Load images
+    print("Loading images...")
     im_rgb1, im_gray1 = load_im('assets/mffw_06_A.jpg')
     im_rgb2, im_gray2 = load_im('assets/mffw_06_B.jpg')
 
-    # 提取匹配
-    matches1, matches2 = extract_matches(
-        args,
-        im_rgb1, im_gray1, im_rgb2, im_gray2,
-        detector, descriptor, device)
+    # Keypoint detection stage
+    print("\nDetecting keypoints...")
+    detection_start = time.time()
+    kpts1 = detect(args, im_rgb1, detector, device)
+    kpts2 = detect(args, im_rgb2, detector, device)
+    detection_end = time.time()
+    detection_time = detection_end - detection_start
+    print(f"Keypoint detection completed: {detection_time:.3f} seconds")
+    print(f"Image 1: {len(kpts1)} keypoints, Image 2: {len(kpts2)} keypoints")
+    
+    # Feature description stage
+    print("\nExtracting descriptors...")
+    descriptor_start = time.time()
+    
+    # Extract descriptors for the first image
+    if len(kpts1) > 0:
+        kpts_tensor1 = torch.from_numpy(kpts1[:, 0:2])  # Only use x, y coordinates
+        kp1 = torch.cat([kpts_tensor1[:, 0].view(-1, 1).float(), kpts_tensor1[:, 1].view(-1, 1).float()],dim=1).unsqueeze(0).to(device)
+        s1 = args.s_mult * torch.ones((1, len(kpts1), 1, 1)).to(device)
+        src_laf1 = K.feature.laf_from_center_scale_ori(kp1, s1, torch.zeros((1, len(kpts1), 1)).to(device))
+        timg_gray1 = torch.from_numpy(im_gray1).unsqueeze(0).unsqueeze(0).to(device)
+        patches1 = K.feature.extract_patches_from_pyramid(timg_gray1.float() / 255.0, src_laf1, PS=32)[0]
+        desc1 = descriptor(patches1.to(device)).cpu().detach().numpy()
+    else:
+        desc1 = np.array([])
+    
+    # Extract descriptors for the second image
+    if len(kpts2) > 0:
+        kpts_tensor2 = torch.from_numpy(kpts2[:, 0:2])  # Only use x, y coordinates
+        kp2 = torch.cat([kpts_tensor2[:, 0].view(-1, 1).float(), kpts_tensor2[:, 1].view(-1, 1).float()],dim=1).unsqueeze(0).to(device)
+        s2 = args.s_mult * torch.ones((1, len(kpts2), 1, 1)).to(device)
+        src_laf2 = K.feature.laf_from_center_scale_ori(kp2, s2, torch.zeros((1, len(kpts2), 1)).to(device))
+        timg_gray2 = torch.from_numpy(im_gray2).unsqueeze(0).unsqueeze(0).to(device)
+        patches2 = K.feature.extract_patches_from_pyramid(timg_gray2.float() / 255.0, src_laf2, PS=32)[0]
+        desc2 = descriptor(patches2.to(device)).cpu().detach().numpy()
+    else:
+        desc2 = np.array([])
+    
+    descriptor_end = time.time()
+    descriptor_time = descriptor_end - descriptor_start
+    print(f"Descriptor extraction completed: {descriptor_time:.3f} seconds")
+    
+    # Feature matching stage
+    print("\nMatching features...")
+    matching_start = time.time()
+    
+    if desc1.size == 0 or desc2.size == 0:
+        matches1 = np.zeros([0,2])
+        matches2 = np.zeros([0,2])
+    else:
+        with torch.inference_mode():
+            _, match_ids = K.feature.match_smnn(
+                torch.from_numpy(desc1), torch.from_numpy(desc2), 0.99
+            )
+        
+        if match_ids.size(0) == 0:
+            matches1 = np.zeros([0,2])
+            matches2 = np.zeros([0,2])
+        else:
+            matches1 = kpts1[match_ids[:, 0], :2]  # Only use x, y coordinates
+            matches2 = kpts2[match_ids[:, 1], :2]  # Only use x, y coordinates
+    
+    matching_end = time.time()
+    matching_time = matching_end - matching_start
+    print(f"Feature matching completed: {matching_time:.3f} seconds")
 
-    # 保存匹配结果
+    # Save matching results
+    output_path = r"results/matches_MFFW_6.png"
+    
+    # Ensure output directory exists
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"Created output directory: {output_dir}")
+    
     if matches1.shape[0] > 0 and matches2.shape[0] > 0:
         result_img = draw_matches(im_rgb1, matches1, im_rgb2, matches2, show_num=100)
-        Image.fromarray(result_img).save(r"results/matches_MFFW_6.png")
-        print(f"成功找到 {matches1.shape[0]} 个匹配点")
+        Image.fromarray(result_img).save(output_path)
+        
+        # Calculate runtime and display information
+        end_time = time.time()
+        runtime = end_time - start_time
+        
+        print(f"\n=== Feature Matching Completed ===")
+        print(f"Number of matches found: {matches1.shape[0]}")
+        print(f"\n--- Timing Breakdown ---")
+        print(f"Keypoint detection: {detection_time:.3f} seconds")
+        print(f"Descriptor extraction: {descriptor_time:.3f} seconds")
+        print(f"Feature matching: {matching_time:.3f} seconds")
+        print(f"Total runtime: {runtime:.3f} seconds")
+        print(f"\nResult saved to: {os.path.abspath(output_path)}")
+        print(f"Device used: {device}")
     else:
-        print("未找到匹配点")
+        end_time = time.time()
+        runtime = end_time - start_time
+        
+        print(f"\n=== Feature Matching Completed ===")
+        print(f"No matches found")
+        print(f"\n--- Timing Breakdown ---")
+        print(f"Keypoint detection: {detection_time:.3f} seconds")
+        print(f"Descriptor extraction: {descriptor_time:.3f} seconds")
+        print(f"Feature matching: {matching_time:.3f} seconds")
+        print(f"Total runtime: {runtime:.3f} seconds")
+        print(f"Device used: {device}")

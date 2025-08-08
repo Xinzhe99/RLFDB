@@ -91,37 +91,47 @@ python demo_match_proposed.py \
 
 ### Python API
 
-```python
-import torch
-import numpy as np
-from PIL import Image
-from model.network import RLFDB
-from demo_inference import load_im, detect_and_save, parse_test_config
+#### 1. Keypoint Detection
 
-# Initialize model
+```python
+from utils.test_utils import detect
+from model.network import RLFDB
+import torch
+
+# Load model
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = RLFDB(
-    dims=[32, 64, 128, 256], 
-    layers=[2, 2, 6, 2], 
-    expand_ratio=3.0, 
-    mlp_ratio=3.0, 
-    use_dw=True,
-    drop_path_rate=0.05
-).to(device)
+detector = RLFDB(dims=[32, 64, 128, 256], layers=[2, 2, 6, 2], 
+                 expand_ratio=3.0, mlp_ratio=3.0, use_dw=True, 
+                 drop_path_rate=0.05).to(device)
 
 # Load pretrained weights
-checkpoint = torch.load('pretrained/checkpoint.pth', map_location=device)
-model.load_state_dict(checkpoint['model_state'])
-model.eval()
+checkpoint = torch.load('pretrained/checkpoint.pth', weights_only=False)
+detector.load_state_dict(checkpoint['model_state'])
+detector.eval()
 
 # Detect keypoints
-args = parse_test_config()
-image = load_im('path/to/your/image.jpg')
-keypoints = detect_and_save(args, image, model, device)
-
-print(f"Detected {len(keypoints)} keypoints")
-# keypoints format: [x, y, score, response] for each point
+keypoints = detect(args, image, detector, device)
 ```
+
+#### 2. Feature Matching
+
+```python
+# Run complete feature matching demo
+python demo_match_proposed.py
+
+# Or single image keypoint detection
+python demo_inference.py --input_image your_image.jpg
+```
+
+#### Configuration Parameters
+
+Key parameters can be set via command line or configuration class:
+- `num_features`: Maximum number of keypoints (default: 2048)
+- `heatmap_confidence_threshold`: Confidence threshold (default: 0.001)
+- `nms_size`: NMS window size (default: 3)
+- `border_size`: Border size (default: 15)
+
+For detailed usage examples, please refer to `demo_inference.py` and `demo_match_proposed.py`.
 
 ## 📊 Dataset
 

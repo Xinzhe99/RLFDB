@@ -6,11 +6,10 @@ from pathlib import Path
 import torch
 from tensorboardX import SummaryWriter
 from configs import config
-from utils import common_utils, train_utils
+from utils import common_utils, train_utils, test_utils
 from utils.logger import logger
 from datasets import create_dataloader
 import torch.nn as nn
-from predict_kp_on_eval_dataset import load_im,detect_and_save
 import numpy as np
 from hsequeces_bench_kpts import compute_hsequences_metrics
 from model.network import RLFDB
@@ -134,8 +133,8 @@ with tqdm.trange(start_epoch, total_epochs, desc='epochs', dynamic_ncols=True) a
                             input_path = os.path.join(input_subdir, filename)
                             output_path = os.path.join(output_subdir, f"{filename}.kpt.npy")
                             # Load image and detect keypoints
-                            im_rgb = load_im(input_path)
-                            keypoints = detect_and_save(args, im_rgb, model, device)
+                            im_rgb = train_utils.load_im(input_path)
+                            keypoints = test_utils.detect(args, im_rgb, model, device)
                             # Save keypoints
                             np.save(output_path, keypoints)
 

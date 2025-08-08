@@ -3,6 +3,50 @@ import torch
 import yaml
 from scipy.ndimage.filters import maximum_filter
 
+def detect(args, im, detector, device):
+    """Optimized version of detect_and_save function with reduced variable assignments and efficient operations"""
+    # Normalize image and get dimensions in one step
+    im_norm = im / 255.0
+    height_orig, width_orig = im_norm.shape[:2]
+    
+    # Chain preprocessing operations
+    image_processed = mod_padding_symmetric(make_shape_even(im_norm), factor=64)
+    
+    # Direct tensor conversion with efficient operations
+    input_tensor = torch.from_numpy(image_processed).permute(2, 0, 1).unsqueeze(0).float()
+    
+    # Model inference
+    with torch.inference_mode():
+        score_map_padded = detector(input_tensor.to(device))['prob'][0].detach().cpu().numpy()
+    
+    # Efficient unpadding using calculated offsets
+    pad_h, pad_w = score_map_padded.shape[:2]
+    h_offset = (pad_h - height_orig) >> 1  # Use bit shift for division by 2
+    w_offset = (pad_w - width_orig) >> 1
+    
+    # Extract original region and remove borders in one step
+    score_map_cropped = remove_borders(
+        score_map_padded[h_offset:h_offset + height_orig, w_offset:w_offset + width_orig],
+        borders=args.border_size
+    )
+    
+    # Extract and sort points efficiently
+    pts = get_points_direct_from_score_map(
+        heatmap=score_map_cropped,
+        conf_thresh=args.heatmap_confidence_threshold,
+        nms_size=args.nms_size,
+        subpixel=args.sub_pixel,
+        patch_size=args.patch_size,
+        order_coord=args.order_coord
+    )
+    
+    # Early return for empty results
+    if pts.size == 0:
+        return np.zeros([0, 4])
+    
+    # Sort and limit points in one operation
+    return pts[np.argsort(-pts[:, 3])][:args.num_features]
+
 
 def get_cfg_from_yaml_file(cfg_file):
     with open(cfg_file, 'r') as f:
@@ -14,21 +58,47 @@ def get_cfg_from_yaml_file(cfg_file):
     return config
 
 def make_shape_even(image):
-    height, width = image.shape[0], image.shape[1]
-    padh = 1 if height % 2 != 0 else 0
-    padw = 1 if width % 2 != 0 else 0
-    image = np.pad(image, ((0, padh), (0, padw), (0, 0)), mode='constant', constant_values=0)
+    """Optimized version: only pad if necessary and use bitwise operations for even check"""
+    height, width = image.shape[:2]
+    
+    # Use bitwise AND for faster even/odd check
+    padh = height & 1  # equivalent to height % 2
+    padw = width & 1   # equivalent to width % 2
+    
+    # Only pad if necessary
+    if padh or padw:
+        image = np.pad(image, ((0, padh), (0, padw), (0, 0)), mode='constant', constant_values=0)
+    
     return image
 
 def mod_padding_symmetric(image, factor=64):
-    height, width = image.shape[0], image.shape[1]
-    height_pad, width_pad = ((height + factor) // factor) * factor, (
-        (width + factor) // factor) * factor
-    padh = height_pad - height if height % factor != 0 else 0
-    padw = width_pad - width if width % factor != 0 else 0
-    image = np.pad(
-        image, ((padh // 2, padh // 2), (padw // 2, padw // 2), (0, 0)),
-        mode='constant', constant_values=0)
+    """Optimized version: simplified calculations and early return if no padding needed"""
+    height, width = image.shape[:2]
+    
+    # Calculate remainder more efficiently
+    height_rem = height % factor
+    width_rem = width % factor
+    
+    # Early return if no padding needed
+    if height_rem == 0 and width_rem == 0:
+        return image
+    
+    # Calculate padding needed
+    padh = (factor - height_rem) % factor
+    padw = (factor - width_rem) % factor
+    
+    # Only pad if necessary
+    if padh or padw:
+        # Use integer division for symmetric padding
+        pad_top = padh >> 1  # equivalent to padh // 2
+        pad_bottom = padh - pad_top
+        pad_left = padw >> 1  # equivalent to padw // 2
+        pad_right = padw - pad_left
+        
+        image = np.pad(
+            image, ((pad_top, pad_bottom), (pad_left, pad_right), (0, 0)),
+            mode='constant', constant_values=0)
+    
     return image
 
 def remove_borders(image, borders): 
@@ -128,58 +198,122 @@ def get_points_direct_from_score_map(
     return np.asarray(indexes) # N,4
 
 def nms_fast(in_corners, H, W, dist_thresh):
-    grid = np.zeros((H, W)).astype(int)  # Track NMS data.
-    inds = np.zeros((H, W)).astype(int)  # Store indices of points.
-    # Sort by confidence and round to nearest int.
-    inds1 = np.argsort(-in_corners[2, :])
-    corners = in_corners[:, inds1]
-    rcorners = corners[:2, :].round().astype(int)  # Rounded corners.
-    # Check for edge case of 0 or 1 corners.
-    if rcorners.shape[1] == 0:
+    # Fast NMS via grid aggregation + windowed local-maximum filtering.
+    # - Deduplicate multiple points falling on the same pixel by keeping the highest score
+    # - Use maximum_filter with a (2*dist_thresh+1) square window to keep local maxima
+    # - Break ties deterministically using tiny coordinate-dependent epsilon (no numba)
+    
+    # Handle empty input early
+    if in_corners.size == 0:
         return np.zeros((3, 0)).astype(int), np.zeros(0).astype(int)
-    if rcorners.shape[1] == 1:
-        out = np.vstack((rcorners, in_corners[2])).reshape(3, 1)
-        return out, np.zeros((1)).astype(int)
-    # Initialize the grid.
-    for i, rc in enumerate(rcorners.T):
-        grid[rcorners[1, i], rcorners[0, i]] = 1
-        inds[rcorners[1, i], rcorners[0, i]] = i
-    # Pad the border of the grid, so that we can NMS points near the border.
-    pad = dist_thresh
-    grid = np.pad(grid, ((pad, pad), (pad, pad)), mode='constant')
-    # Iterate through points, highest to lowest conf, suppress neighborhood.
-    count = 0
-    for i, rc in enumerate(rcorners.T):
-        # Account for top and left padding.
-        pt = (rc[0] + pad, rc[1] + pad)
-        if grid[pt[1], pt[0]] == 1:  # If not yet suppressed.
-            grid[pt[1] - pad:pt[1] + pad + 1, pt[0] - pad:pt[0] + pad + 1] = 0
-            grid[pt[1], pt[0]] = -1
-            count += 1
-    # Get all surviving -1's and return sorted array of remaining corners.
-    keepy, keepx = np.where(grid == -1)
-    keepy, keepx = keepy - pad, keepx - pad
-    inds_keep = inds[keepy, keepx]
-    out = corners[:, inds_keep]
-    values = out[-1, :]
-    inds2 = np.argsort(-values)
-    out = out[:, inds2]
-    out_inds = inds1[inds_keep[inds2]]
+
+    # Round coordinates to integer pixel locations
+    xs = np.rint(in_corners[0]).astype(int)
+    ys = np.rint(in_corners[1]).astype(int)
+    scores = in_corners[2]
+
+    # Keep only points within image bounds
+    valid_mask = (xs >= 0) & (xs < W) & (ys >= 0) & (ys < H)
+    if not np.any(valid_mask):
+        return np.zeros((3, 0)).astype(int), np.zeros(0).astype(int)
+
+    xs = xs[valid_mask]
+    ys = ys[valid_mask]
+    scores = scores[valid_mask]
+    original_indices = np.nonzero(valid_mask)[0]
+
+    # If only one valid corner, return directly
+    if xs.size == 1:
+        out = np.vstack((xs, ys, scores)).reshape(3, 1)
+        return out, original_indices
+
+    # Deduplicate: keep only the highest-score point per pixel
+    linear_idx = ys * W + xs
+    order = np.lexsort((scores, linear_idx))  # primary: linear_idx, secondary: scores
+    lin_sorted = linear_idx[order]
+    cnts = np.bincount(lin_sorted - lin_sorted.min())  # not directly useful for groups; use unique below
+    uniq_lin, group_starts, group_counts = np.unique(lin_sorted, return_index=True, return_counts=True)
+    # Index of max-score per pixel is the last in each group (due to secondary sort by score)
+    best_in_group_order_idx = group_starts + group_counts - 1
+    selected_order = order[best_in_group_order_idx]
+
+    sel_xs = xs[selected_order]
+    sel_ys = ys[selected_order]
+    sel_scores = scores[selected_order]
+    sel_inds = original_indices[selected_order]
+
+    # Build score grid and index grid for selected unique pixels
+    score_grid = np.zeros((H, W), dtype=np.float64)
+    score_grid[sel_ys, sel_xs] = sel_scores
+
+    index_grid = np.full((H, W), -1, dtype=int)
+    index_grid[sel_ys, sel_xs] = sel_inds
+
+    # Add tiny coordinate-dependent epsilon to break ties deterministically
+    if sel_xs.size > 0:
+        eps = 1e-7
+        ranks = (sel_ys.astype(np.int64) * W + sel_xs.astype(np.int64)).astype(np.float64)
+        if ranks.size > 1:
+            rmin = ranks.min()
+            rmax = ranks.max()
+            denom = (rmax - rmin) if (rmax > rmin) else 1.0
+            ranks = (ranks - rmin) / denom
+        else:
+            ranks = ranks * 0.0
+        score_grid_with_eps = score_grid.copy()
+        score_grid_with_eps[sel_ys, sel_xs] += eps * ranks
+    else:
+        score_grid_with_eps = score_grid
+
+    # Windowed local-maximum filtering
+    k = int(dist_thresh) * 2 + 1
+    if k < 1:
+        k = 1
+    local_max = maximum_filter(score_grid_with_eps, size=(k, k), mode='constant', cval=0.0)
+    keep_mask = (score_grid_with_eps == local_max) & (score_grid > 0)
+
+    keep_y, keep_x = np.where(keep_mask)
+    if keep_x.size == 0:
+        return np.zeros((3, 0)).astype(int), np.zeros(0).astype(int)
+
+    keep_scores = score_grid[keep_y, keep_x]
+    keep_indices = index_grid[keep_y, keep_x]
+
+    # Sort by score descending to match previous behavior
+    sort_desc = np.argsort(-keep_scores)
+    keep_x = keep_x[sort_desc]
+    keep_y = keep_y[sort_desc]
+    keep_scores = keep_scores[sort_desc]
+    keep_indices = keep_indices[sort_desc]
+
+    out = np.vstack((keep_x, keep_y, keep_scores))
+    out_inds = keep_indices
     return out, out_inds
 
 def soft_argmax_points(pts, heatmap, patch_size=5):
-    pts = pts.transpose().copy()
-    patches = extract_patch_from_points(heatmap, pts, patch_size=patch_size)
-    patches = np.stack(patches)
-    patches_torch = torch.tensor(patches, dtype=torch.float32).unsqueeze(0)
+    # 减少不必要的拷贝，直接转置
+    pts_transposed = pts.transpose()
+    patches = extract_patch_from_points(heatmap, pts_transposed, patch_size=patch_size)
+    
+    # 直接创建tensor，避免先stack再转换
+    patches_torch = torch.tensor(np.stack(patches), dtype=torch.float32).unsqueeze(0)
+    
+    # 合并norm和log操作以减少中间变量
     patches_torch = norm_patches(patches_torch)
     patches_torch = do_log(patches_torch)
+    
+    # 计算亚像素偏移
     dxdy = soft_argmax_2d(patches_torch, normalized_coordinates=False)
-    points = pts
-    points[:,:2] = points[:,:2] + dxdy.numpy().squeeze() - patch_size//2
-    patches = patches_torch.numpy().squeeze()
-    pts_subpixel = points.transpose().copy()
-    return pts_subpixel.copy()
+    
+    # 直接在原始数据上操作，避免额外拷贝
+    offset = patch_size // 2
+    dxdy_np = dxdy.numpy().squeeze()
+    
+    # 创建结果点，避免多次拷贝
+    pts_subpixel = pts_transposed.copy()
+    pts_subpixel[:, :2] += dxdy_np - offset
+    
+    return pts_subpixel.transpose()
 
 def extract_patch_from_points(heatmap, points, patch_size=5):
     if type(heatmap) is torch.Tensor:
