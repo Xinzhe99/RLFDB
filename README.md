@@ -91,8 +91,6 @@ python demo_match_proposed.py \
 
 ### Python API
 
-#### 1. Keypoint Detection
-
 ```python
 from utils.test_utils import detect
 from model.network import RLFDB
@@ -112,24 +110,6 @@ detector.eval()
 # Detect keypoints
 keypoints = detect(args, image, detector, device)
 ```
-
-#### 2. Feature Matching
-
-```python
-# Run complete feature matching demo
-python demo_match_proposed.py
-
-# Or single image keypoint detection
-python demo_inference.py --input_image your_image.jpg
-```
-
-#### Configuration Parameters
-
-Key parameters can be set via command line or configuration class:
-- `num_features`: Maximum number of keypoints (default: 2048)
-- `heatmap_confidence_threshold`: Confidence threshold (default: 0.001)
-- `nms_size`: NMS window size (default: 3)
-- `border_size`: Border size (default: 15)
 
 For detailed usage examples, please refer to `demo_inference.py` and `demo_match_proposed.py`.
 
