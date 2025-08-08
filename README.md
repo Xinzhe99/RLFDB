@@ -63,8 +63,8 @@ pip install -r requirements.txt
 # Create pretrained directory
 mkdir pretrained
 
-# Download pretrained weights (replace with actual download link)
-wget -O pretrained/checkpoint.pth
+# Download pretrained weights and put into the directory
+
 ```
 
 ### Simple Inference
